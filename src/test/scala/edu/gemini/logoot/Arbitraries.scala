@@ -61,4 +61,12 @@ trait Arbitraries {
         98 -> arbitrary[Middle],
          1 -> End)
     }
+
+  implicit val arbState: Arbitrary[LogootState] =
+    Arbitrary {
+      for {
+        sid  <- arbitrary[SiteId]
+        seed <- arbitrary[Long]
+      } yield LogootState(sid, seed)
+    }
 }

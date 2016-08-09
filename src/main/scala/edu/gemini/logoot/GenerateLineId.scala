@@ -71,7 +71,7 @@ private[logoot] object GenerateLineId {
         case (PosZero #:: tp, PosZero #:: tq)        =>
           // End of p and q and all previous digits match.  Here we insert 0 and
           // 1 respectively to generate space between the two.  We know that
-          // p =/= q because we filter that out in the entry point but all
+          // p < q because we filter equal ids out in the entry point but all
           // digits of p and q might be the same.
           (new PosZipper(ps._1, PosZero, ps._2),
            new PosZipper(qs._1, PosOne,  qs._2))
@@ -81,10 +81,10 @@ private[logoot] object GenerateLineId {
 
         case _                                       =>
           // When the digits differ, if all previous positions are identical
-          // and yet we know (p =/= q) then the remaining suffix of p must be
-          // < q.  Here we don't need a phantom 1 to find space between the two.
-          // Otherwise the previous positions differ then the prefix of p < q
-          // but the suffix may not be less so we insert 0 and 1.
+          // and yet we know (p < q) then the remaining suffix of p must be less
+          // than q.  Here we don't need a phantom 1 to find space between the
+          // two. Otherwise the previous positions differ then the prefix of
+          // p < q but the suffix may not be less so we insert 0 and 1.
           (new PosZipper(ps._1, PosZero,                           ps._2),
            new PosZipper(qs._1, prefixMatches ? PosZero | PosOne,  qs._2))
       }

@@ -4,6 +4,7 @@ import scalaz._
 
 import LogootDsl._
 
+/** Provides support for executing a logoot calculation. */
 object Logoot {
   private object xform {
     type Result[A] = State[LogootState, A]

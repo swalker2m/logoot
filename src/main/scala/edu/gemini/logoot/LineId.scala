@@ -3,11 +3,17 @@ package edu.gemini.logoot
 import scalaz._, Scalaz._
 import scalaz.Ordering.{EQ, LT, GT}
 
+/** The id of a particular element in the document. */
 sealed trait LineId
 
 object LineId {
+  /** A phantom id that is sorted before all other possible ids. */
   case object Beginning                                      extends LineId
+
+  /** An id of an element in the document. */
   final case class Middle(positions: NonEmptyList[Position]) extends LineId
+
+  /** A phantom id that is sorted after all other possible ids. */
   case object End                                            extends LineId
 
   def middle(head: Position, tail: List[Position]): LineId =
