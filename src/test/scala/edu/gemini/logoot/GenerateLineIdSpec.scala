@@ -30,7 +30,7 @@ object GenerateLineIdSpec extends Specification with ScalaCheck with Arbitraries
 
         val count = (n % 999).abs + 1
 
-        val ids = Logoot.eval(GenerateLineId(p0, q0, count, None), sid, seed)
+        val ids = GenerateLineId(p0, q0, count, None).eval(LineIdState(sid, seed))
         val seq = (p0 :: ids) :+ q0
 
 //        println("--------------")

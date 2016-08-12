@@ -25,10 +25,7 @@ trait Arbitraries {
 
   implicit val arbSiteId: Arbitrary[SiteId] =
     Arbitrary {
-      for {
-        msb <- arbitrary[Long]
-        lsb <- arbitrary[Long]
-      } yield SiteId(new UUID(msb, lsb))
+      Gen.uuid.map(u => SiteId(u))
     }
 
   implicit val arbPosition: Arbitrary[Position] =
@@ -62,11 +59,11 @@ trait Arbitraries {
          1 -> End)
     }
 
-  implicit val arbState: Arbitrary[LogootState] =
+  implicit val arbState: Arbitrary[LineIdState] =
     Arbitrary {
       for {
         sid  <- arbitrary[SiteId]
         seed <- arbitrary[Long]
-      } yield LogootState(sid, seed)
+      } yield LineIdState(sid, seed)
     }
 }

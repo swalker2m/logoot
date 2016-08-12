@@ -2,18 +2,22 @@ package edu.gemini.logoot
 
 import scalaz._
 
-final case class LogootState(site: SiteId, rng: Rng, timestamp: Timestamp)
+final case class LogootState[A](doc: LogootDoc[A], idState: LineIdState)
 
 object LogootState {
-  def apply(site: SiteId, seed: Long): LogootState =
-    LogootState(site, Rng(seed), Timestamp.Zero)
+  def init[A](site: SiteId, seed: Long): LogootState[A] =
+    init[A](LineIdState(site, seed))
 
-  val site: LogootState @> SiteId =
-    Lens.lensu((a, b) => a.copy(site = b), _.site)
+  def init[A](lineIdState: LineIdState): LogootState[A] =
+    LogootState(emptyDoc[A], lineIdState)
 
-  val rng: LogootState @> Rng =
-    Lens.lensu((a, b) => a.copy(rng = b), _.rng)
+  def idState[A]: LogootState[A] @> LineIdState =
+    Lens.lensu((a, b) => a.copy(idState = b), _.idState)
 
-  val timestamp: LogootState @> Timestamp =
-    Lens.lensu((a, b) => a.copy(timestamp = b), _.timestamp)
+  def site[A]: LogootState[A] @> SiteId =
+    idState andThen LineIdState.siteLens
+
+  def doc[A]: LogootState[A] @> LogootDoc[A] =
+    Lens.lensu((a, b) => a.copy(doc = b), _.doc)
+
 }

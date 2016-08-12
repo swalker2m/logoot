@@ -2,7 +2,8 @@ package edu.gemini.logoot
 
 import edu.gemini.logoot.LogootOp.{Patch, Delete, Insert}
 
-/** Logoot algorithm operations. */
+/** Logoot algorithm operations. Operations are produced by local edits so that
+  * they can be easily shipped to and applied at peers. */
 sealed trait LogootOp[A] {
   def apply(doc: LogootDoc[A]): LogootDoc[A] =
     this match {
@@ -21,4 +22,13 @@ object LogootOp {
 
   /** Combines multiple operations into one. */
   case class Patch[A](ops: List[LogootOp[A]]) extends LogootOp[A]
+
+  def insert[A](id: LineId, content: A): LogootOp[A] =
+    Insert(id, content)
+
+  def delete[A](id: LineId): LogootOp[A] =
+    Delete(id)
+
+  def patch[A](ops: List[LogootOp[A]]): LogootOp[A] =
+    Patch(ops)
 }

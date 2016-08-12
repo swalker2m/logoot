@@ -1,98 +1,82 @@
 package edu.gemini.logoot
 
-import edu.gemini.logoot.LogootOp.{Delete, Insert, Patch}
 import org.scalacheck.Arbitrary
-import org.scalacheck.Arbitrary.arbitrary
-import org.scalacheck.Prop.{forAll, _}
+import org.scalacheck.Arbitrary._
+import org.scalacheck.Prop.forAll
 import org.specs2.ScalaCheck
 import org.specs2.mutable.Specification
 
 import scala.util.Random
-import scalaz._
+import scalaz._, Scalaz._
 
 object LogootSpec extends Specification with ScalaCheck with Arbitraries {
 
-  def toOp[A](ops: List[LogootOp[A]]): LogootOp[A] =
-    ops match {
-      case List(op) => op
-      case _        => Patch(ops)
-    }
+  case class Site[A](state: LogootState[A], remoteOps: Dequeue[LogootOp[A]])
 
-  def insertionPoint[A](doc: LogootDoc[A]): (LineId, LineId) = {
-    val size = doc.size
-    val index = Random.nextInt(size + 1)
-    val p = doc.elemAt(index - 1).map(_._1).getOrElse(LineId.Beginning)
-    val q = doc.elemAt(index).map(_._1).getOrElse(LineId.End)
-    (p, q)
-  }
+  final class Sim[A: Arbitrary] extends LogootEditor[A] {
 
-  def simLocalInsert[A : Arbitrary](doc: LogootDoc[A]): Logoot[LogootOp[A]] = {
-    // Pick an insertion point.
-    val (p, q) = insertionPoint(doc)
+    val localInsert: Result[LogootOp[A]] =
+      for {
+        doc  <- read
+        sz    = doc.size
+        loc   = if (sz == 0) -1 else Random.nextInt(sz)
+        op   <- insert(loc, arbitrary[List[A]].sample.get)
+      } yield op
 
-    // Pick a number of items to insert.
-    val items = arbitrary[List[A]].sample.get
-    GenerateLineId(p, q, items.length, None).map { ids =>
-      toOp(ids.zip(items).map { case (id0, item) => Insert(id0, item) })
-    }
-  }
+    val localDelete: Result[LogootOp[A]] =
+      for {
+        doc <- read
+        sz   = doc.size
+        loc  = if (sz == 0) -1 else Random.nextInt(sz)
+        cnt  = if (sz == 0)  0 else Random.nextInt(sz - loc)
+        op  <- delete(loc, cnt)
+      } yield op
 
-  def simLocalDelete[A](doc: LogootDoc[A]): Logoot[LogootOp[A]] =
-    Logoot.point(toOp(doc.fold(List.empty[LogootOp[A]]) { (id, a, lst) =>
-      if (Random.nextBoolean()) lst
-      else Delete[A](id) :: lst
-    }))
+    def localEdit(remoteQ: Dequeue[LogootOp[A]], localAction: Result[LogootOp[A]]): Result[Dequeue[LogootOp[A]]] =
+      localAction.map { _ +: remoteQ }
 
-  def sim[A: Arbitrary](local: Site[A], remote: Site[A]): (Site[A], Site[A]) =
-    if (Random.nextBoolean()) {
-      val op = if (Random.nextBoolean()) simLocalInsert(local.doc) else simLocalDelete(local.doc)
-      local.doLocal(op, remote)
-    } else {
-      (local.doRemote(), remote)
-    }
+    def remoteEdit(localQ: Dequeue[LogootOp[A]]): Result[Dequeue[LogootOp[A]]] =
+      localQ.unsnoc.cata( { case (op, q2) => applyOp(op).as(q2) }, point(localQ))
 
-  case class Site[A](state: LogootState, doc: LogootDoc[A], remoteOps: Dequeue[LogootOp[A]]) {
-    def doLocal(op: Logoot[LogootOp[A]], remote: Site[A]): (Site[A], Site[A]) = {
-      val (state2, o) = Logoot.run(op, state)
-      val local2      = Site(state2, o(doc), remoteOps)
-      val remote2     = remote.copy(remoteOps = o +: remote.remoteOps)
-      (local2, remote2)
-    }
+    def update(localQ: Dequeue[LogootOp[A]], remoteQ: Dequeue[LogootOp[A]]): Result[(Dequeue[LogootOp[A]], Dequeue[LogootOp[A]])] =
+      Random.nextInt(3) match {
+        case 0 => localEdit(remoteQ, localInsert).map(r2 => (localQ, r2))
+        case 1 => localEdit(remoteQ, localDelete).map(r2 => (localQ, r2))
+        case 2 => remoteEdit(localQ).map(l2 => (l2, remoteQ))
+      }
 
-    def doRemote(): Site[A] =
-      remoteOps.unsnoc.cata({ case (op, d) => Site(state, op(doc), d) }, this)
+    def finish(site: Site[A]): LogootDoc[A] =
+      site.remoteOps.toBackStream.toList.traverseU(applyOp).exec(site.state).doc
   }
 
   "Logoot edits" should {
     "be eventually consistent" in
-      forAll { (s0: LogootState, s1: LogootState, s2: LogootState, init: List[Int], rounds: Int) =>
-        val lines  = Logoot.eval(GenerateLineId(LineId.Beginning, LineId.End, init.size, None), s0)
-        val doc0   = ==>>.fromList(lines.zip(init))
-
-        val siteA0 = Site(s1, doc0, Dequeue.empty[LogootOp[Int]])
-        val siteB0 = Site(s2, doc0, Dequeue.empty[LogootOp[Int]])
+      forAll { (s0: LineIdState, s1: LineIdState, s2: LineIdState, init: List[Int], rounds: Int) =>
+        val sim    = new Sim[Int]
+        val doc0   = sim.init(init).eval(LogootState.init(s0))
+        val siteA0 = Site(LogootState(doc0, s1), Dequeue.empty[LogootOp[Int]])
+        val siteB0 = Site(LogootState(doc0, s2), Dequeue.empty[LogootOp[Int]])
 
         val count  = (rounds % 50).abs
 
         // Perform count edits at both sites, occasionally incorporating edits
-        // of the opposite site.  In the end, there will possibly be unexecuted
+        // of the opposite site.  In the end, there will possibly be un-executed
         // operations from the remote opposite to apply to each site.
-        val (siteA1, siteB1) = ((siteA0, siteB0)/:(0 to count)) { case ((a1, b1), _) =>
-          val (a2, b2) = sim(a1, b1)
-          sim(b2, a2).swap
+        val (siteA1, siteB1) = ((siteA0, siteB0)/:(0 until count)) { case ((a1, b1), i) =>
+          val (sa, (qa2, qb2)) = sim.update(a1.remoteOps, b1.remoteOps).run(a1.state)
+          val (sb, (qb3, qa3)) = sim.update(qb2,          qa2         ).run(b1.state)
+          (Site(sa, qa3), Site(sb, qb3))
         }
 
-        // Finish any leftover steps and extract the resulting doc.
-        def finish[A](site: Site[A]): LogootDoc[A] =
-          if (site.remoteOps.isEmpty) site.doc
-          else finish(site.doRemote())
-
-        val docA = finish(siteA1)
-        val docB = finish(siteB1)
+        // Finish any leftover remote operations that weren't applied and
+        // extract the resulting doc.
+        val docA = sim.finish(siteA1)
+        val docB = sim.finish(siteB1)
 
         // Documents should match now that all edits at both sites have been
         // applied.
         docA.toList == docB.toList
       }
   }
+
 }

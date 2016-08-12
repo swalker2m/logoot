@@ -10,7 +10,7 @@ import scalaz._, Scalaz._
   */
 private[logoot] object GenerateLineId {
 
-  def apply(p: LineId, q: LineId, n: Int, boundary: Option[Int]): Logoot[List[LineId]] = {
+  def apply(p: LineId, q: LineId, n: Int, boundary: Option[Int]): State[LineIdState, List[LineId]] = {
     def qIsZero = q match {
       case Middle(posList) => posList.toList.all(_.d === Digit.Zero)
       case _               => false
@@ -19,7 +19,7 @@ private[logoot] object GenerateLineId {
     // Verify that p < q and that q is not a zero position (otherwise there is
     // no space between p and q and we return an empty list.)
     if ((p >= q) || (n < 1) || qIsZero)
-      Logoot.point(List.empty[LineId])
+      State.state(List.empty[LineId])
     else
       gen(p, q, n, boundary.filter(_ > 0))
   }
@@ -28,7 +28,7 @@ private[logoot] object GenerateLineId {
   private val PosOne  = Position(Digit.One,  SiteId.Min, Timestamp.Zero)
   private val PosMax  = Position(Digit.Max,  SiteId.Max, Timestamp.Max)
 
-  private def gen(p: LineId, q: LineId, n: Int, boundary: Option[Int]): Logoot[List[LineId]] = {
+  private def gen(p: LineId, q: LineId, n: Int, boundary: Option[Int]): State[LineIdState, List[LineId]] = {
 
     // Turns an ID into an infinite stream of positions.
     def posStream(id: LineId): Stream[Position] =
@@ -144,11 +144,13 @@ private[logoot] object GenerateLineId {
     val start    = pz.prefix(width).toBase10
     val numList  = (0 until n).toList.map { i => Number.fromBase10(start + (step * i)) }
 
+    import LineIdState._
+
     for {
-      sid  <- LogootDsl.site
-      _    <- LogootDsl.tick
-      time <- LogootDsl.timeNow
-      nums <- numList.traverseU { num => LogootDsl.rand(stepNum).map(_ + num + Number.One) }
+      sid  <- site
+      _    <- tick
+      time <- timeNow
+      nums <- numList.traverseU { num => rand(stepNum).map(_ + num + Number.One) }
     } yield nums.map(id(_, width, sid, time))
   }
 
