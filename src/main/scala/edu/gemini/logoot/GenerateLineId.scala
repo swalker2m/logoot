@@ -111,6 +111,9 @@ private[logoot] object GenerateLineId {
     }
 
     def id(num: Number, width: Int, site: SiteId, timestamp: Timestamp): LineId = {
+      def digitMatches(d: Digit, p: Position): Boolean =
+        (p =/= PosZero) && (p =/= PosMax) && p.d === d
+
       @tailrec
       def go(rem: List[(Digit, Position)], matching: Boolean, res: List[Position]): LineId =
         rem match {
@@ -119,7 +122,7 @@ private[logoot] object GenerateLineId {
             LineId.middle(posList.head, posList.tail)
 
           case (digit, pos) :: tail =>
-            if (matching && digit === pos.d) go(tail, matching = true, pos :: res)
+            if (matching && digitMatches(digit, pos)) go(tail, matching = true, pos :: res)
             else go(tail, matching = false, Position(digit, site, timestamp) :: res)
         }
 

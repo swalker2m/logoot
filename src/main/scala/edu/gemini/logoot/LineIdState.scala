@@ -30,7 +30,7 @@ object LineIdState {
     for {
       r1     <- rngLens.st
       (r2, i) = r1.nextNumber(n)
-      _      <- rngLens.assign(r2)
+      _      <- rngLens := r2
     } yield i
 }
 

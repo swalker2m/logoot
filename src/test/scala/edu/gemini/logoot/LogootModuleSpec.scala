@@ -1,5 +1,7 @@
 package edu.gemini.logoot
 
+import edu.gemini.logoot.LogootMessage.Patch
+
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary._
 import org.scalacheck.Prop.forAll
@@ -12,34 +14,36 @@ import scalaz._
 
 object LogootModuleSpec extends Specification with ScalaCheck with Arbitraries {
 
-  case class Site[T](state: LogootState[T], remoteOps: Dequeue[LogootOp[T]])
+  case class Site[T](state: LogootState[T], remoteOps: Dequeue[Patch[T]])
 
   final class Sim[T: Arbitrary] extends LogootModule[T] {
 
-    val localInsert: Logoot[LogootOp[T]] =
+    val localInsert: Logoot[Patch[T]] =
       for {
-        doc  <- read
-        sz    = doc.size
-        loc   = if (sz == 0) -1 else Random.nextInt(sz)
-        op   <- insert(loc, arbitrary[List[T]].sample.get)
-      } yield op
+        doc <- read
+        sz   = doc.size
+        loc  = if (sz == 0) -1 else Random.nextInt(sz)
+        _   <- insert(loc, arbitrary[List[T]].sample.get)
+        p   <- finishEdit
+      } yield p
 
-    val localDelete: Logoot[LogootOp[T]] =
+    val localDelete: Logoot[Patch[T]] =
       for {
         doc <- read
         sz   = doc.size
         loc  = if (sz == 0) -1 else Random.nextInt(sz)
         cnt  = if (sz == 0)  0 else Random.nextInt(sz - loc)
-        op  <- delete(loc, cnt)
-      } yield op
+        _   <- delete(loc, cnt)
+        p   <- finishEdit
+      } yield p
 
-    def localEdit(remoteQ: Dequeue[LogootOp[T]], localAction: Logoot[LogootOp[T]]): Logoot[Dequeue[LogootOp[T]]] =
+    def localEdit(remoteQ: Dequeue[Patch[T]], localAction: Logoot[Patch[T]]): Logoot[Dequeue[Patch[T]]] =
       localAction.map { _ +: remoteQ }
 
-    def remoteEdit(localQ: Dequeue[LogootOp[T]]): Logoot[Dequeue[LogootOp[T]]] =
-      localQ.unsnoc.cata( { case (op, q2) => applyOp(op).as(q2) }, point(localQ))
+    def remoteEdit(localQ: Dequeue[Patch[T]]): Logoot[Dequeue[Patch[T]]] =
+      localQ.unsnoc.cata( { case (m, q2) => receive(m).as(q2) }, point(localQ))
 
-    def update(localQ: Dequeue[LogootOp[T]], remoteQ: Dequeue[LogootOp[T]]): Logoot[(Dequeue[LogootOp[T]], Dequeue[LogootOp[T]])] =
+    def update(localQ: Dequeue[Patch[T]], remoteQ: Dequeue[Patch[T]]): Logoot[(Dequeue[Patch[T]], Dequeue[Patch[T]])] =
       Random.nextInt(3) match {
         case 0 => localEdit(remoteQ, localInsert).map(r2 => (localQ, r2))
         case 1 => localEdit(remoteQ, localDelete).map(r2 => (localQ, r2))
@@ -50,7 +54,7 @@ object LogootModuleSpec extends Specification with ScalaCheck with Arbitraries {
       LogootInterp.exec(this)(insert(-1, lines), LogootState.init[T](lid)).doc
 
     def finish(site: Site[T]): LogootDoc[T] = {
-      val prog = site.remoteOps.toBackStream.toList.traverseU(applyOp)
+      val prog = site.remoteOps.toBackStream.toList.traverseU(receive)
       LogootInterp.exec(this)(prog, site.state).doc
     }
   }
@@ -60,8 +64,8 @@ object LogootModuleSpec extends Specification with ScalaCheck with Arbitraries {
       forAll { (s0: LineIdState, s1: LineIdState, s2: LineIdState, init: List[Int], rounds: Int) =>
         val sim    = new Sim[Int]
         val doc0   = sim.init(init, s0)
-        val siteA0 = Site(LogootState(doc0, s1), Dequeue.empty[LogootOp[Int]])
-        val siteB0 = Site(LogootState(doc0, s2), Dequeue.empty[LogootOp[Int]])
+        val siteA0 = Site(LogootState.init(doc0, s1), Dequeue.empty[Patch[Int]])
+        val siteB0 = Site(LogootState.init(doc0, s2), Dequeue.empty[Patch[Int]])
 
         val count  = (rounds % 50).abs
 

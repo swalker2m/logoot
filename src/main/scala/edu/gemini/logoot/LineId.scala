@@ -1,10 +1,28 @@
 package edu.gemini.logoot
 
+import edu.gemini.logoot.LineId.{End, Beginning}
+
 import scalaz._, Scalaz._
 import scalaz.Ordering.{EQ, LT, GT}
 
 /** The id of a particular element in the document. */
-sealed trait LineId
+sealed trait LineId {
+  /** Determines whether this line id is a special marker of the beginning or
+    * end of the document.
+    * @return true if the beginning or end, false otehrwise
+    */
+  def isSpecial: Boolean = this match {
+    case Beginning | End => true
+    case _               => false
+  }
+
+  /** Determines whether this is a "normal" middle (between beginning and end)
+    * line id.
+    * @return true if a middle id, false otherwise
+    */
+  def isMiddle: Boolean =
+    !isSpecial
+}
 
 object LineId {
   /** A phantom id that is sorted before all other possible ids. */
