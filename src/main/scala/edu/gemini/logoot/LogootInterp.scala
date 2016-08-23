@@ -22,6 +22,9 @@ object LogootInterp {
     def history: LogootState[T] @> HistoryBuffer[T] =
       LogootState.history[T]
 
+    def cemetery: LogootState[T] @> Cemetery =
+      LogootState.cemetery[T]
+
     def patch(pid: PatchId): LogootState[T] @?> (Patch[T], Degree) =
       LogootState.patch[T](pid)
 
@@ -32,8 +35,28 @@ object LogootInterp {
       if (index < 0) State.state(LineId.Beginning)
       else doc.st.map(_.elemAt(index).map(_._1) | LineId.End)
 
+    def executeOp(op: LogootOp[T]): Result[T, Unit] =
+      op match {
+        case LogootOp.Insert(lid, t) =>
+          for {
+            dg <- cemetery.map(_.get(lid).incr)
+            _  <- if (dg === Degree.One) doc %== (_ + (lid -> t))
+                  else cemetery %== (c => c.set(lid, dg))
+          } yield ()
+
+        case LogootOp.Delete(lid, _) =>
+          for {
+            c0 <- cemetery
+            d0 <- doc
+            (d1, dg) = if (d0.member(lid)) (d0 - lid, Degree.Zero) else (d0, c0.get(lid).decr)
+            _  <- doc := d1
+            _  <- cemetery %== (_.set(lid, dg))
+          } yield ()
+      }
+
     def execute(ops: List[LogootOp[T]]): Result[T, Unit] =
-        doc %== { d0 => (d0/:ops) { case (d,o) => o(d) } }
+      ops.traverseU(executeOp).map(_ => ()) // no as(()) ?
+//      doc %== { d0 => (d0/:ops) { case (d,o) => o(d) } }
 
     import module._
 
@@ -71,7 +94,7 @@ object LogootInterp {
               for {
                 s <- session.st
                 p  = Patch(PatchId.random, s.reverse.flatten)
-                _ <- patch(p.pid) := (p, Degree.One)
+                _ <- history %== (_ + (p.pid -> (p, Degree.One)))
                 _ <- session := List.empty
               } yield p
 

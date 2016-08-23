@@ -59,7 +59,7 @@ trait Arbitraries {
          1 -> End)
     }
 
-  implicit val arbState: Arbitrary[LineIdState] =
+  implicit val arbLineIdState: Arbitrary[LineIdState] =
     Arbitrary {
       for {
         sid  <- arbitrary[SiteId]
