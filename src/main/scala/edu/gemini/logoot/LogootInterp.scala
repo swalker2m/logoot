@@ -3,7 +3,7 @@ package edu.gemini.logoot
 import scala.language.reflectiveCalls
 import scalaz._, Scalaz._
 
-import edu.gemini.logoot.LogootMessage.{Patch, Redo, Undo}
+import edu.gemini.logoot.LogootMessage.{Patch, Redo => MRedo, Undo => MUndo}
 
 object LogootInterp {
   type Result[T, A] = State[LogootState[T], A]
@@ -31,6 +31,9 @@ object LogootInterp {
     val unit: Result[T, Unit] =
       State.state(())
 
+    def point[A](a: => A): Result[T, A] =
+      State.state(a)
+
     def idAt(index: Int): Result[T, LineId] =
       if (index < 0) State.state(LineId.Beginning)
       else doc.st.map(_.elemAt(index).map(_._1) | LineId.End)
@@ -56,7 +59,25 @@ object LogootInterp {
 
     def execute(ops: List[LogootOp[T]]): Result[T, Unit] =
       ops.traverseU(executeOp).map(_ => ()) // no as(()) ?
-//      doc %== { d0 => (d0/:ops) { case (d,o) => o(d) } }
+
+    val emptyMessage: Result[T, Option[LogootMessage[T]]] =
+      point(Option.empty[LogootMessage[T]])
+
+    def initiateMessage(pid: PatchId, pred: Degree => Boolean)(op: (Patch[T], Degree) => Result[T, LogootMessage[T]]): Result[T, Option[LogootMessage[T]]] =
+      for {
+        t <- patch(pid)
+        r <- t.filter { case (_, d) => pred(d) }.fold(emptyMessage) { case (p, d) =>
+               op(p, d).map(r => Some(r))
+             }
+      } yield r
+
+    def receiveMessage(pid: PatchId, thatDeg: Degree, pred: Degree => Boolean)(ops: Patch[T] => List[LogootOp[T]]): Result[T, Unit] =
+      for {
+        t <- patch(pid) %= { case (p, d) => (p, d + thatDeg) }
+        _ <- t.filter { case (_, d) => pred(d) }.fold(unit) { case (p, _) =>
+               execute(ops(p))
+             }
+      } yield ()
 
     import module._
 
@@ -98,23 +119,36 @@ object LogootInterp {
                 _ <- session := List.empty
               } yield p
 
+              // Lookup the corresponding patch.  If it exists and has a value
+              // greater than 0, undo the operations, assign a zero degree, and
+              // create an Undo message with the degree.  Otherwise, do nothing.
+            case Undo(pid) =>
+              initiateMessage(pid, _ > Degree.Zero) { (p, d) =>
+                for {
+                  _ <- execute(p.inverse)
+                  _ <- patch(pid) := (p, Degree.Zero)
+                } yield MUndo(pid, -d)
+              }
+
+            case Redo(pid) =>
+              initiateMessage(pid, _ <= Degree.Zero) { (p, d) =>
+                for {
+                  _ <- execute(p.ops)
+                  _ <- patch(pid) := (p, Degree.One)
+                } yield MRedo(pid, -d + Degree.One)
+              }
+
             case Receive(p@Patch(pid, ops)) =>
               for {
-                _ <- patch(pid) := (p, Degree.One)
+                _ <- history %== (_ + (p.pid -> (p, Degree.One)))
                 _ <- execute(p.ops)
               } yield ()
 
-            case Receive(Undo(pid)) =>
-              for {
-                t <- patch(pid) %= { case (p, deg) => (p, deg.decr) }
-                _ <- t.filter(_._2 === Degree.Zero).fold(unit) { case (p, _) => execute(p.inverse) }
-              } yield ()
+            case Receive(MUndo(pid, thatDeg)) =>
+              receiveMessage(pid, thatDeg, _ === Degree.Zero)(_.inverse)
 
-            case Receive(Redo(pid)) =>
-              for {
-                t <- patch(pid) %= { case (p, d) => (p, d.incr) }
-                _ <- t.filter(_._2 === Degree.One).fold(unit) { case (p, _) => execute(p.ops) }
-              } yield ()
+            case Receive(MRedo(pid, thatDeg)) =>
+              receiveMessage(pid, thatDeg, _ === Degree.One)(_.ops)
           }
       }
   }

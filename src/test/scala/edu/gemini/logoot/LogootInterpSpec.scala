@@ -6,9 +6,6 @@ import org.scalacheck.Prop.forAll
 import org.specs2.ScalaCheck
 import org.specs2.mutable.Specification
 
-import scalaz.Scalaz._
-import scalaz._
-
 object LogootInterpSpec extends Specification with ScalaCheck with Arbitraries {
   def dump[A](lst: List[A]): String =
     lst.mkString("[", ", ", "]")
@@ -41,11 +38,6 @@ object LogootInterpSpec extends Specification with ScalaCheck with Arbitraries {
         _ <- delete(loc, cnt)
         p <- finishEdit
       } yield p
-  }
-
-  case class UndoModule[T](pid: PatchId) extends LogootModule[T] {
-    def test: Logoot[Unit] =
-      receive(LogootMessage.Undo(pid))
   }
 
   "LogootInterp" should {
@@ -99,11 +91,12 @@ object LogootInterpSpec extends Specification with ScalaCheck with Arbitraries {
         val iMod            = InsertModule(init, pos, update)
         val state0          = Initialize(site0, seed0, site1, seed1, init)
         val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val (state2, msg)   = LogootInterp.run(iMod)(iMod.undo(patch.pid), state1)
 
-        val uMod            = UndoModule[Int](patch.pid)
-        val state2          = LogootInterp.exec(uMod)(uMod.test, state1)
-
-        init == state2.doc.values
+        init == state2.doc.values && (msg match {
+          case Some(LogootMessage.Undo(_, d)) => d == -Degree.One
+          case _                              => false
+        })
       }
 
     "undo delete" in
@@ -112,12 +105,129 @@ object LogootInterpSpec extends Specification with ScalaCheck with Arbitraries {
         val dMod            = DeleteModule(init, pos, count)
         val state0          = Initialize(site0, seed0, site1, seed1, init)
         val (state1, patch) = LogootInterp.run(dMod)(dMod.test, state0)
+        val (state2, msg)   = LogootInterp.run(dMod)(dMod.undo(patch.pid), state1)
 
-        val uMod            = UndoModule[Int](patch.pid)
-        val state2          = LogootInterp.exec(uMod)(uMod.test, state1)
+        init == state2.doc.values && (msg match {
+          case Some(LogootMessage.Undo(_, d)) => d == -Degree.One
+          case _                              => false
+        })
+      }
 
-        init == state2.doc.values
+    "skip undo if not necessary" in
+      forAll { (site0: SiteId, seed0: Long, site1: SiteId, seed1: Long, init: List[Int], pos: Int, update: List[Int]) =>
+        val iMod            = InsertModule(init, pos, update)
+        val state0          = Initialize(site0, seed0, site1, seed1, init)
+        val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val pid             = patch.pid
+        val state2          = LogootInterp.exec(iMod)(iMod.undo(pid), state1)
+        val (state3, msg)   = LogootInterp.run(iMod)(iMod.undo(pid), state2)
+
+        init == state3.doc.values && (msg match {
+          case None => true
+          case _    => false
+        })
+      }
+
+    "undo multiple redone ops" in
+      forAll { (site0: SiteId, seed0: Long, site1: SiteId, seed1: Long, init: List[Int], pos: Int, update: List[Int]) =>
+
+        val iMod            = InsertModule(init, pos, update)
+        val state0          = Initialize(site0, seed0, site1, seed1, init)
+        val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val pid             = patch.pid
+        val two             = Degree(2)
+
+        val state2          = state1.copy(history = state1.history + (pid -> (patch, two)))
+        val (state3, msg)   = LogootInterp.run(iMod)(iMod.undo(pid), state2)
+
+        init == state3.doc.values && (msg match {
+          case Some(LogootMessage.Undo(_, d)) => d == -two
+          case _                              => false
+        })
+      }
+
+    "redo insert" in
+      forAll { (site0: SiteId, seed0: Long, site1: SiteId, seed1: Long, init: List[Int], pos: Int, update: List[Int]) =>
+
+        val iMod            = InsertModule(init, pos, update)
+        val state0          = Initialize(site0, seed0, site1, seed1, init)
+        val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val pid             = patch.pid
+        val state2          = LogootInterp.exec(iMod)(iMod.undo(pid), state1)
+        val (state3, msg)   = LogootInterp.run(iMod)(iMod.redo(pid), state2)
+
+        state1.doc.values == state3.doc.values && (msg match {
+          case Some(LogootMessage.Redo(_, Degree.One)) => true
+          case _                                       => false
+        })
+      }
+
+    "skip redo if not necessary" in
+      forAll { (site0: SiteId, seed0: Long, site1: SiteId, seed1: Long, init: List[Int], pos: Int, update: List[Int]) =>
+
+        val iMod            = InsertModule(init, pos, update)
+        val state0          = Initialize(site0, seed0, site1, seed1, init)
+        val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val pid             = patch.pid
+        val state2          = LogootInterp.exec(iMod)(iMod.undo(pid), state1)
+        val state3          = LogootInterp.exec(iMod)(iMod.redo(pid), state2)
+        val (state4, msg)   = LogootInterp.run(iMod)(iMod.redo(pid), state3)
+
+        state1.doc.values == state4.doc.values && (msg match {
+          case None => true
+          case _    => false
+        })
+      }
+
+    "redo multiple undone ops" in
+      forAll { (site0: SiteId, seed0: Long, site1: SiteId, seed1: Long, init: List[Int], pos: Int, update: List[Int]) =>
+
+        val iMod            = InsertModule(init, pos, update)
+        val state0          = Initialize(site0, seed0, site1, seed1, init)
+        val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val pid             = patch.pid
+        val two             = Degree(2)
+
+        val state2          = state1.copy(history = state1.history + (pid -> (patch, -two)))
+        val (state3, msg)   = LogootInterp.run(iMod)(iMod.redo(pid), state2)
+
+        state1.doc.values == state3.doc.values && (msg match {
+          case Some(LogootMessage.Redo(_, d)) => d == two + Degree.One
+          case _                              => false
+        })
+      }
+
+    "handle remote undo messages" in
+      forAll { (site0: SiteId, seed0: Long, site1: SiteId, seed1: Long, init: List[Int], pos: Int, update: List[Int]) =>
+
+        val iMod            = InsertModule(init, pos, update)
+        val state0          = Initialize(site0, seed0, site1, seed1, init)
+        val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val pid             = patch.pid
+        val undo            = LogootMessage.Undo[Int](pid, -Degree.One)
+        val state2          = LogootInterp.exec(iMod)(iMod.receive(undo), state1)
+
+        init == state2.doc.values && (state2.history.lookup(pid) match {
+          case Some((_, Degree.Zero)) => true
+          case _                      => false
+        })
+      }
+
+    "handle remote redo messages" in
+      forAll { (site0: SiteId, seed0: Long, site1: SiteId, seed1: Long, init: List[Int], pos: Int, update: List[Int]) =>
+
+        val iMod            = InsertModule(init, pos, update)
+        val state0          = Initialize(site0, seed0, site1, seed1, init)
+        val (state1, patch) = LogootInterp.run(iMod)(iMod.test, state0)
+        val pid             = patch.pid
+        val state2          = LogootInterp.exec(iMod)(iMod.undo(pid), state1)
+        val redo            = LogootMessage.Redo[Int](pid, Degree.One)
+        val (state3, msg)   = LogootInterp.run(iMod)(iMod.receive(redo), state2)
+
+        state1.doc.values == state3.doc.values && (state3.history.lookup(pid) match {
+          case Some((_, Degree.One)) => true
+          case _                     => false
+        })
       }
   }
-
 }

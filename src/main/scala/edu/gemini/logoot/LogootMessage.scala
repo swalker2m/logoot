@@ -10,6 +10,6 @@ object LogootMessage {
       ops.map(_.inverse)
   }
 
-  final case class Undo[A](pid: PatchId)                          extends LogootMessage[A]
-  final case class Redo[A](pid: PatchId)                          extends LogootMessage[A]
+  final case class Undo[A](pid: PatchId, deg: Degree) extends LogootMessage[A]
+  final case class Redo[A](pid: PatchId, deg: Degree) extends LogootMessage[A]
 }
