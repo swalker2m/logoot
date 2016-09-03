@@ -8,6 +8,16 @@ import java.util.UUID
 import scalaz.NonEmptyList
 
 trait Arbitraries {
+  implicit val arbDegree: Arbitrary[Degree] =
+    Arbitrary {
+      arbitrary[Int].map(Degree.apply)
+    }
+
+  implicit val arbCemetery: Arbitrary[Cemetery] =
+    Arbitrary {
+      Gen.listOf(arbitrary[(LineId, Degree)]).map(Cemetery.fromList)
+    }
+
   implicit val arbDigit: Arbitrary[Digit] =
     Arbitrary {
       Gen.chooseNum(0, Digit.Base - 1).map(Digit.fromInt)
@@ -51,7 +61,7 @@ trait Arbitraries {
       } yield Middle(NonEmptyList[Position](head, tail: _*))
     }
 
-  implicit val arbElementId: Arbitrary[LineId] =
+  implicit val arbLineId: Arbitrary[LineId] =
     Arbitrary {
       Gen.frequency[LineId](
          1 -> Beginning,
